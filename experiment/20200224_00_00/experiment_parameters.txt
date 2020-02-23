@@ -1,0 +1,15 @@
+
+    --------------
+    start training
+    --------------
+    arena size: 5, 
+    state_size: 25
+    network_architecture: [6, 16, 3]
+    learning_rate: 0.001000
+    q_ learning_rate: 0.001000
+    gamma: 0.100000
+    epochs: 100
+    iterations: 100
+    epsilon_greedy: 0.1
+    --------------------
+    

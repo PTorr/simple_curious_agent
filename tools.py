@@ -1,31 +1,15 @@
+import os
 import numpy as np
 import pandas as pd
-import random
 from itertools import combinations_with_replacement, permutations
 import learner as lr
 from time import time
 import matplotlib.pyplot as plt
 import seaborn as sns
+from datetime import datetime
 import pickle
 
 np.random.seed(42)
-
-### arena size
-arena_width, arena_height = 5, 5 # only odd numbers
-### Agent
-state_size = arena_width * arena_height
-### Learner architecture
-input_size = 6
-action_size = 3
-network_architecture = [input_size, 16, action_size]
-learning_rate = 1e-4
-q_learning_rate = 1e-2
-### Q learning discount factor.
-gamma = 0.1
-### training params
-epochs = 100
-iterations = 1000
-epsilon_greedy = .1
 
 ### useful variables.
 al = [1,0,0]
@@ -35,27 +19,31 @@ actions = {'al':al, 'af': af, 'ar':ar}
 actions_nums = {'al':0, 'af': 1, 'ar':2}
 directions = {0: 'North', 1: 'East', 2: 'South', 3: 'West'}
 
-print('''
---------------
-start training
---------------
-arena size: %d, 
-state_size: %d
-network_architecture: %s
-learning_rate: %f
-q_ learning_rate: %f
-gamma: %f
-epochs: %d
-iterations: %d
-epsilon_greedy: %.1f
---------------------
-''' % (arena_width, state_size, network_architecture, learning_rate, q_learning_rate, gamma, epochs, iterations, epsilon_greedy))
+
+def print_current_setup(arena_width, state_size, network_architecture, learning_rate, q_learning_rate, gamma, epochs, iterations, epsilon_greedy):
+    s = '''
+    --------------
+    start training
+    --------------
+    arena size: %d, 
+    state_size: %d
+    network_architecture: %s
+    learning_rate: %f
+    q_ learning_rate: %f
+    gamma: %f
+    epochs: %d
+    iterations: %d
+    epsilon_greedy: %.1f
+    --------------------
+    ''' % (arena_width, state_size, network_architecture, learning_rate, q_learning_rate, gamma, epochs, iterations, epsilon_greedy)
+    print(s)
+    return s
 
 
 class actor:
-    def __init__(self, state_size, action_size, learning_rate, gamma):
+    def __init__(self,arena_width,  q_learning_rate, gamma):
         # Initialize q-table values to 0
-        self.lr = learning_rate
+        self.lr = q_learning_rate
         self.gamma = gamma
         self.Qmat = create_states(arena_width)[['al','af','ar']]
 
@@ -64,21 +52,6 @@ class actor:
 
     def choose_action(self, state):
         return self.Qmat.loc[state,['al','af','ar']].astype('float').idxmax()
-
-
-def explore_exploit(Qmat, state, action):
-    # Set the percent you want to explore
-    epsilon = 0.05
-    if random.uniform(0, 1) < epsilon:
-        """
-        Explore: select a random action
-        """
-        np.random.randint(0, 3)
-    else:
-        """
-        Exploit: select the action with max value (future reward)
-        """
-        np.argmax(Qmat[state, action])
 
 
 def create_states(arena_width):
@@ -149,67 +122,124 @@ def take_action(action, curr_dist, arena_width, direction):
     return [L, F, R], state, nd
 
 
+def train_agent(q_learning_rate, gamma, network_architecture, arena_width, iterations, epochs, learning_rate):
+    # 1: initialize learner and q matrix. (state)
+    agent_actor = actor(arena_width, q_learning_rate, gamma)
+    synapses_init = lr.initialize_synapses(network_architecture)  # initialize weights.
+    with open("initial_synapses.txt", "wb") as fp:  # Pickling
+        pickle.dump(synapses_init, fp)
 
-# 1: initialize learner and q matrix. (state)
-agent_actor = actor(state_size, action_size, q_learning_rate, gamma)
-df = pd.DataFrame(data=[], columns=['epoch', 'iteration', 'state', 'direction','action', 'loss'])
-k = 0
-### init learner (size)
-for e in range(epochs):
-    t1 = time()
-    synapses = lr.initialize_synapses(network_architecture) # initialize weights.
-    [r, f, l], s, d = take_action('r', 0, arena_width, 0) # choose random place to start.
+    ### init learner (size)
+    for e in range(epochs):
+        df = pd.DataFrame(data=[], columns=['epoch', 'iteration', 'state', 'direction', 'action', 'loss'])
+        t1 = time()
+        with open("initial_synapses.txt", "rb") as fp:  # Unpickling
+            synapses = pickle.load(fp)
+        [r, f, l], s, d = take_action('r', 0, arena_width, 0) # choose random place to start.
+        for iter in range(iterations):
+            ### this loop check the possible outcomes of the next steps.
+            xi = [r, f, l]  # current distances
+            state = '%s%s%s' % tuple(np.array([r, f, l]).astype(int))  # current state as string.
+            for actn, act in actions.items():
+                x = np.append(np.array(xi)/ 4, act) # add the current action to test to the distances vector.
+                y, new_state, _ = take_action(action=actions_nums[actn], curr_dist=xi, arena_width=arena_width, direction=d) # "take" the action and get the new state
+                synapses_, layers_, layers_delta_, layers_error_, loss = lr.learner_ann(x=x, y=np.array(y)/4, synapses=synapses,
+                                                                              alpha=learning_rate, num_of_iterations=1, train=False) # try to predict the outcome with the learner (which is an ANN).
+                if new_state == state:
+                    reward = 0
+                else:
+                    reward = loss * len(y)# the reward of the possible action.
+                agent_actor.q_update(state=state, new_state=new_state, action=actn, reward=reward) # update the Q matrix
 
-    for iter in range(iterations):
-        ### this loop check the possible outcomes of the next steps.
-        xi = [r, f, l]  # current distances
-        state = '%s%s%s' % tuple(np.array([r, f, l]).astype(int))  # current state as string.
-        for actn, act in actions.items():
-            x = np.append(np.array(xi)/ 4, act) # add the current action to test to the distances vector.
-            y, new_state, _ = take_action(action=actions_nums[actn], curr_dist=xi, arena_width=arena_width, direction=d) # "take" the action and get the new state
-            synapses, layers, layers_delta, layers_error, loss = lr.learner_ann(x=x, y=y, synapses=synapses,
-                                                                          alpha=learning_rate, num_of_iterations=1, train=False) # try to predict the outcome with the learner (which is an ANN).
-            if new_state == state:
-                reward = 0
-            else:
-                reward = loss  * len(y)# the reward of the possible action.
-            agent_actor.q_update(state=state, new_state=new_state, action=actn, reward=reward) # update the Q matrix
+            ### Decide which action to take based on the Q matrix and current state.
+            action2take = agent_actor.choose_action(state)
 
-        ### Decide which action to take based on the Q matrix and current state.
-        action2take = agent_actor.choose_action(state)
+            ### Epsilon greedy, 10% will be random choice
+            if np.random.randint(10) < epsilon_greedy * 10:
+                action2take = list(actions_nums.keys())[np.random.randint(3)]
 
-        ### Epsilon greedy, 10% will be random choice
-        if np.random.randint(10) < epsilon_greedy * 10:
-            action2take = list(actions_nums.keys())[np.random.randint(3)]
+            ### Advance the state based on the chosen action
+            [r, f, l], new_state, new_direction = take_action(action=actions_nums[action2take], curr_dist=xi, arena_width=arena_width,direction=d)
+            xf = np.append(np.array([r,f,l]) / 4, actions[action2take])  # add the current action to test to the distances vector.
 
-        ### Advance the state based on the chosen action
-        [r, f, l], new_state, new_direction = take_action(action=actions_nums[action2take], curr_dist=xi, arena_width=arena_width,direction=d)
-        xf = np.append(np.array([r,f,l]) / 4, actions[action2take])  # add the current action to test to the distances vector.
+            ### Train the learner omly on the action that was taken.
+            synapses, layers, layers_delta, layers_error, loss = lr.learner_ann(x=x, y=np.array(xf[:3])/4, synapses=synapses,
+                                                                          alpha=learning_rate, num_of_iterations=1,
+                                                                          train=True)  # try to predict the outcome with the learner (which is an ANN).
+            df.loc[iter,:] = [e, iter, state, d, action2take, loss]
+            d = new_direction
 
-        ### Train the learner omly on the action that was taken.
-        synapses, layers, layers_delta, layers_error, loss = lr.learner_ann(x=x, y=xf[:3], synapses=synapses,
-                                                                      alpha=learning_rate, num_of_iterations=1,
-                                                                      train=True)  # try to predict the outcome with the learner (which is an ANN).
-        df.loc[k,:] = [e, iter, state, d, action2take, loss]
-        k+=1
-        d = new_direction
-    print('Epoch: %d, time: %.2f' %(e, time()-t1))
-    Qc = agent_actor.Qmat.copy()
-    Qc['epoch'] = e
-    if 'Qmats' in locals():
-        pd.concat((Qmats, Qc))
-    else:
-        Qmats = Qc.copy()
-print(agent_actor.Qmat.index)
-df[['epoch','iteration']] = df[['epoch','iteration']].astype(int)
-df['loss'] = df['loss'].astype(float)
+        del(synapses, layers, layers_delta, layers_error, loss)
+        Qc = agent_actor.Qmat.copy()
+        Qc['epoch'] = e
+        Qc.to_csv(current_experiment + '/Qmats/epoch_%d.csv' % e)
 
-sns.lineplot(x='iteration',y='loss', hue='epoch', data=df)#, legend='full')
-df.to_csv('summary.csv')
-Qmats.to_csv('Qmats.csv')
+        df[['epoch', 'iteration']] = df[['epoch', 'iteration']].astype(int)
+        df['loss'] = df['loss'].astype(float)
+        df.to_csv(current_experiment + '/summaries/epoch_%d.csv' %e)
 
-# plt.matshow(Qmats[Qmats['epoch'] == 0])
-# plt.matshow(Qmats[Qmats['epoch'] == 50])
-# plt.matshow(Qmats[Qmats['epoch'] == 99])
+        ### end of epoch
+        print('Epoch: %d, time: %.2f' %(e, time()-t1))
+
+
+### PARAMETERS TO CONTROL
+### arena size
+arena_width, arena_height = 5, 5 # only odd numbers
+### Agent
+state_size = arena_width * arena_height
+### Learner architecture
+input_size = 6
+action_size = 3
+network_architecture = [input_size, 16, action_size]
+learning_rate = 1e-4
+q_learning_rate = 1e-4
+### Q learning discount factor.
+gamma = 0.1
+### training params
+epochs = 100
+iterations = 100
+epsilon_greedy = .1
+
+train = True
+plot_summary = True
+
+s = print_current_setup(arena_width, state_size, network_architecture, learning_rate, q_learning_rate, gamma, epochs, iterations, epsilon_greedy)
+
+now = datetime.now()
+dt_string = now.strftime("%Y%m%d_%H_%M")
+current_experiment = 'experiment/%s' % dt_string
+
+os.mkdir(current_experiment)
+os.mkdir(current_experiment + '/Qmats')
+os.mkdir(current_experiment + '/summaries')
+os.mkdir(current_experiment + '/plots')
+with open(current_experiment+'/experiment_parameters.txt', 'a') as the_file:
+    the_file.write(s)
+
+if train:
+    train_agent(q_learning_rate, gamma, network_architecture, arena_width, iterations, epochs, learning_rate)
+
+if plot_summary:
+    ### load summaries and combine to one dataframe
+    df_comb = pd.DataFrame()
+    for df in os.listdir(current_experiment + '/summaries'):
+        df = pd.read_csv(current_experiment + '/summaries/'+df, index_col=0)
+        df_comb = pd.concat((df_comb, df), axis = 0)
+    fig, ax = plt.subplots(1,1)
+    sns.lineplot(x='iteration',y='loss', hue='epoch', data=df_comb, alpha=.5, ax=ax)#, legend='full')
+    fig.savefig(current_experiment + '/plots/loss_epoch_iteration.jpg')
+
+    ### load Q matriecs and combine to one dataframe
+    df_qmats = pd.DataFrame()
+    for df in os.listdir(current_experiment + '/Qmats'):
+        df = pd.read_csv(current_experiment + '/Qmats/' + df, index_col=0)
+        df_qmats = pd.concat((df_qmats, df), axis=0)
+
+    fig, axs = plt.subplots(3,3)
+    for i, e in enumerate(np.linspace(0, epochs-1, 9).astype(int)):
+        axs[i//3, i%3].matshow(df_qmats.loc[df_qmats.loc[:, 'epoch'] == e, ['al', 'af', 'ar']])
+        axs[i // 3, i % 3].set_title('epoch: %d'%e)
+    fig.tight_layout()
+    fig.savefig(current_experiment + '/plots/qmat.jpg')
 plt.show()
 
