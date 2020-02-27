@@ -196,8 +196,8 @@ q_learning_rate = 1e-4
 ### Q learning discount factor.
 gamma = 0.1
 ### training params
-epochs = 100
-iterations = 100
+epochs = 1
+iterations = 1000
 epsilon_greedy = .1
 
 train = True
@@ -227,19 +227,24 @@ if plot_summary:
         df_comb = pd.concat((df_comb, df), axis = 0)
     fig, ax = plt.subplots(1,1)
     sns.lineplot(x='iteration',y='loss', hue='epoch', data=df_comb, alpha=.5, ax=ax)#, legend='full')
-    fig.savefig(current_experiment + '/plots/loss_epoch_iteration.jpg')
+    fig.savefig(current_experiment + '/plots/loss_epoch_iteration.png', dpi=300)
 
     ### load Q matriecs and combine to one dataframe
     df_qmats = pd.DataFrame()
     for df in os.listdir(current_experiment + '/Qmats'):
         df = pd.read_csv(current_experiment + '/Qmats/' + df, index_col=0)
         df_qmats = pd.concat((df_qmats, df), axis=0)
+    print(df.index)
 
     fig, axs = plt.subplots(3,3)
     for i, e in enumerate(np.linspace(0, epochs-1, 9).astype(int)):
         axs[i//3, i%3].matshow(df_qmats.loc[df_qmats.loc[:, 'epoch'] == e, ['al', 'af', 'ar']])
         axs[i // 3, i % 3].set_title('epoch: %d'%e)
     fig.tight_layout()
-    fig.savefig(current_experiment + '/plots/qmat.jpg')
+    fig.savefig(current_experiment + '/plots/qmat.png', dpi=300)
+
+    ### How many times each action was taken
+    print(pd.value_counts(df_comb['action']))
+
 plt.show()
 
